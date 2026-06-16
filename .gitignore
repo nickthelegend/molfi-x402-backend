@@ -8,3 +8,5 @@ data/*.sqlite
 /cache
 /coverage
 coverage.json
+
+.vercel
