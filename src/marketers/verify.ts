@@ -49,5 +49,6 @@ export async function verifyImpressionProof(impressionId: string) {
     batch,
     proof,
     snowtraceUrl,
+    registryAddress: env.IMPRESSION_REGISTRY_ADDRESS,
   };
 }

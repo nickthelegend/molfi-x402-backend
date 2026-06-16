@@ -5,6 +5,7 @@ import { healthRouter } from './routes/health.js';
 import { statusRouter } from './routes/status.js';
 import { chatRouter } from './chat/routes.js';
 import { adsRouter } from './ads/routes.js';
+import { marketersRouter } from './marketers/routes.js';
 export const app = express();
 app.use(cors({
     origin: env.CORS_ORIGINS,
@@ -16,3 +17,4 @@ app.use(healthRouter);
 app.use(statusRouter);
 app.use(chatRouter);
 app.use(adsRouter);
+app.use(marketersRouter);

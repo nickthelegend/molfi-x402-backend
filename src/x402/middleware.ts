@@ -22,7 +22,7 @@ declare global {
   }
 }
 
-const xPaymentZodSchema = z.object({
+export const xPaymentZodSchema = z.object({
   x402Version: z.literal(1),
   scheme: z.literal('exact'),
   network: z.literal('avalanche-fuji'),

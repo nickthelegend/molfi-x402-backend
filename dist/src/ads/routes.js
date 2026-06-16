@@ -4,6 +4,7 @@ import { verifyAdClaimRateLimit } from '../credits/rate-limit.js';
 import { getUserCredits, addUserCredits, logAdView } from '../credits/store.js';
 import { signCreditToken, verifyCreditToken } from '../credits/jwt.js';
 import { logger } from '../lib/logger.js';
+import { recordAdClaimImpression } from '../marketers/impressions.js';
 export const adsRouter = Router();
 adsRouter.get('/v1/ads', (req, res) => {
     res.json(ADS_REGISTRY);
@@ -39,6 +40,10 @@ adsRouter.post('/v1/ads/claim', async (req, res) => {
     const userId = (walletAddress ? walletAddress : ip).toLowerCase();
     const newBalance = await addUserCredits(userId, ad.credits);
     await logAdView(userId, ad.id, watchedMs);
+    // Marketers impression log hook
+    recordAdClaimImpression(ad.id, watchedMs, walletAddress, ip).catch((err) => {
+        logger.error(`Failed to record ad claim impression: ${err.message}`);
+    });
     logger.info(`Credited user ${userId} with ${ad.credits} credits (new balance: ${newBalance})`);
     const token = signCreditToken(userId, newBalance);
     res.json({
