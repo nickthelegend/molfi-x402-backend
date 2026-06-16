@@ -12,6 +12,8 @@ const envSchema = z.object({
   FUJI_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'FUJI_USDC_ADDRESS must be a valid Ethereum address'),
   BACKEND_OPERATOR_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'BACKEND_OPERATOR_PRIVATE_KEY must be a valid 32-byte hex string starting with 0x'),
   X402_FACILITATOR_URL: z.string().url('X402_FACILITATOR_URL must be a valid URL'),
+  IMPRESSION_REGISTRY_ADDRESS: z.string().optional(),
+  FUJI_EXPLORER_BASE: z.string().url().default('https://testnet.snowtrace.io'),
   OPENROUTER_API_KEY: z.string().min(1, 'OPENROUTER_API_KEY must not be empty'),
   OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
   OPENROUTER_REFERER: z.string().url().default('https://molfi.fun'),
