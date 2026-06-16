@@ -406,6 +406,9 @@ marketersRouter.post('/v1/marketers/billing/topup', requireMarketer, async (req:
       const currentBalance = parseFloat(marketer.balanceUsdc);
       marketer.balanceUsdc = (currentBalance + parseFloat(amountUsdc)).toFixed(6);
       await marketer.save();
+      // Also credit the user account for chat credits (10 credits per 1 USDC)
+      const { addUserCredits } = await import('../credits/store.js');
+      await addUserCredits(req.marketerId, Math.round(parseFloat(amountUsdc) * 10));
     }
 
     const receiptHeader = buildReceiptHeader(txHash, payload.authorization.from);

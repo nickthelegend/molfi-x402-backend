@@ -98,8 +98,8 @@ Issued At: ${new Date().toISOString()}`;
     );
 
     // Step 2: Build the x402 payment
-    const amountUsdc = '1.00'; // 1.00 USDC
-    const value = '1000000'; // 10^6 units
+    const amountUsdc = '0.50'; // 0.50 USDC
+    const value = '500000'; // 5 * 10^5 units
     const operatorAddress = operatorAccount.address;
     const validAfter = 0;
     const validBefore = Math.floor(Date.now() / 1000) + 120; // 2 minutes window
@@ -173,6 +173,6 @@ Issued At: ${new Date().toISOString()}`;
 
     // Verify database balance was updated
     const updatedMarketer = await Marketer.findById(clientAccount.address.toLowerCase());
-    expect(parseFloat(updatedMarketer?.balanceUsdc || '0')).toBe(1.0);
+    expect(parseFloat(updatedMarketer?.balanceUsdc || '0')).toBe(0.5);
   });
 });
