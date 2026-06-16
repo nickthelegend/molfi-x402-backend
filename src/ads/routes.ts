@@ -8,7 +8,8 @@ import { getUserCredits, addUserCredits, logAdView } from '../credits/store.js';
 import { signCreditToken, verifyCreditToken } from '../credits/jwt.js';
 import { mintCredit } from '../credits/jwt.js';
 import { logger } from '../lib/logger.js';
-import { Campaign, Impression, AdHeartbeat, AdClick } from '../marketers/models.js';
+import { Campaign, Impression, AdHeartbeat, AdClick, MerkleBatch } from '../marketers/models.js';
+import { maybeAnchorBatch } from '../marketers/settlement.js';
 import { pickAd } from './auction.js';
 import { verifyClaim, VerificationError } from './verifier.js';
 import { signClickToken, verifyClickToken } from './click.js';
@@ -221,9 +222,22 @@ adsRouter.post('/v1/ads/claim', async (req: any, res: any) => {
         await addUserCredits(userId, 5); // Seed with standard 5 credits
       }
 
+      // Settle on-chain immediately for attention-based verification!
+      let txHash = '';
+      try {
+        await maybeAnchorBatch();
+        const latestBatch = await MerkleBatch.findOne().sort({ anchoredAt: -1 });
+        if (latestBatch) {
+          txHash = latestBatch.anchorTxHash;
+        }
+      } catch (anchorErr) {
+        logger.error(`Failed to anchor batch during claim: ${(anchorErr as Error).message}`);
+      }
+
       return res.json({
         creditJwt,
         expiresAt: Math.floor(Date.now() / 1000) + 5 * 60,
+        txHash,
       });
     } catch (error) {
       if (error instanceof VerificationError) {

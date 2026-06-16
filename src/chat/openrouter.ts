@@ -7,7 +7,7 @@ export async function streamOpenRouter(
   modelOpenRouterId: string,
   messages: Array<{ role: string; content: string }>,
   res: Response
-) {
+): Promise<string> {
   const url = `${env.OPENROUTER_BASE_URL}/chat/completions`;
 
   logger.debug(`Streaming from OpenRouter model: ${modelOpenRouterId}`);
@@ -40,6 +40,7 @@ export async function streamOpenRouter(
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  let fullContent = '';
 
   try {
     while (true) {
@@ -62,6 +63,9 @@ export async function streamOpenRouter(
           try {
             const parsed = JSON.parse(rawData);
             sseWrite(res, parsed);
+            if (parsed.choices?.[0]?.delta?.content) {
+              fullContent += parsed.choices[0].delta.content;
+            }
           } catch (e) {
             logger.warn(`Failed to parse OpenRouter SSE frame: ${trimmed}`);
           }
@@ -72,4 +76,6 @@ export async function streamOpenRouter(
     logger.error(error as Error, 'Error while reading stream from OpenRouter');
     throw error;
   }
+
+  return fullContent;
 }
