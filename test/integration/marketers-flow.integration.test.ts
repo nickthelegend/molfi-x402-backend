@@ -18,30 +18,53 @@ describe('marketers-flow.integration.test.ts - Marketer SIWE, Campaign, and Impr
   let sessionJwt = '';
 
   beforeAll(async () => {
-    if (mongoose.connection.readyState === 0) {
+    console.log('MARKETERS TEST: beforeAll started');
+    console.log('MARKETERS TEST: readyState is', mongoose.connection.readyState);
+    if (mongoose.connection.readyState !== 1) {
+      if (mongoose.connection.readyState !== 0) {
+        console.log('MARKETERS TEST: readyState not 0 or 1, disconnecting...');
+        await mongoose.disconnect();
+      }
+      console.log('MARKETERS TEST: connecting to mongoose...');
       await mongoose.connect(env.MONGODB_URI);
+      console.log('MARKETERS TEST: connected to mongoose');
     }
     // Clean up DB
+    console.log('MARKETERS TEST: cleaning up DB...');
     await Marketer.deleteOne({ _id: testAccount.address.toLowerCase() });
     await Campaign.deleteMany({ marketerId: testAccount.address.toLowerCase() });
+    console.log('MARKETERS TEST: DB cleaned up');
 
     return new Promise<void>((resolve) => {
+      console.log('MARKETERS TEST: starting express server...');
       server = app.listen(0, () => {
         const address = server.address();
         port = typeof address === 'string' ? 8787 : address?.port || 8787;
+        console.log('MARKETERS TEST: express server listening on port', port);
         resolve();
       });
     });
-  });
+  }, 30000);
 
   afterAll(async () => {
+    console.log('MARKETERS TEST: afterAll started');
     await Marketer.deleteOne({ _id: testAccount.address.toLowerCase() });
     await Campaign.deleteMany({ marketerId: testAccount.address.toLowerCase() });
-    await mongoose.disconnect();
+    console.log('MARKETERS TEST: closing server...');
     return new Promise<void>((resolve) => {
-      server.close(() => resolve());
+      if (server) {
+        server.close(() => {
+          console.log('MARKETERS TEST: server closed');
+          resolve();
+        });
+        if (typeof (server as any).closeAllConnections === 'function') {
+          (server as any).closeAllConnections();
+        }
+      } else {
+        resolve();
+      }
     });
-  });
+  }, 30000);
 
   it('1. SIWE Authentication (Nonce -> Sign -> Verify)', async () => {
     // A. Get Nonce
@@ -90,12 +113,17 @@ Issued At: ${new Date().toISOString()}`;
     );
 
     const campaignData = {
-      mp4Url: 'https://example.com/ad.mp4',
+      title: 'Test Video Campaign',
+      type: 'video',
+      creativeUrl: 'https://example.com/ad.mp4',
       durationMs: 15000,
       ctaUrl: 'https://example.com/cta',
       bidPerViewUsdc: '0.010000',
       budgetUsdc: '2.500000',
-      frequencyCap: 0,
+      targeting: {
+        surfaces: ['frontend'],
+      },
+      frequencyCapPerSessionPer4h: 1,
     };
 
     const res = await fetch(`http://localhost:${port}/v1/marketers/campaigns`, {
@@ -107,7 +135,7 @@ Issued At: ${new Date().toISOString()}`;
       body: JSON.stringify(campaignData),
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const campaign = (await res.json()) as { _id: string; marketerId: string; budgetUsdc: string };
     expect(campaign._id).toBeDefined();
     expect(campaign.marketerId.toLowerCase()).toBe(testAccount.address.toLowerCase());

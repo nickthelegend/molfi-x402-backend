@@ -19,6 +19,7 @@ export const envSchema = z.object({
   OPENROUTER_REFERER: z.string().url().default('https://molfi.fun'),
   OPENROUTER_TITLE: z.string().default('Molfi.fun'),
   CORS_ORIGINS: z.string().transform((val) => val.split(',').map((s) => s.trim())),
+  PEPPER: z.string().default('molfi-pepper-attention-verification'),
 });
 
 let validatedEnv: z.infer<typeof envSchema>;

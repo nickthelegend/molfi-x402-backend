@@ -6,8 +6,9 @@ import { env } from '../env.js';
 import { operatorAccount, publicClient } from '../chain/operator.js';
 import { verifyPayment, settlePayment } from './facilitator.js';
 import { logger } from '../lib/logger.js';
-import { getUserCredits, decrementUserCredits } from '../credits/store.js';
+import { redeem } from '../credits/redeem.js';
 import { verifyCreditToken } from '../credits/jwt.js';
+import { getUserCredits, decrementUserCredits } from '../credits/store.js';
 import { isNonceReplayed } from './nonce.js';
 
 declare global {
@@ -80,29 +81,47 @@ export async function x402Middleware(req: Request, res: Response, next: NextFunc
     const token = authHeader.split(' ')[1];
     try {
       const decoded = verifyCreditToken(token);
-      const userId = decoded.sub;
+      
+      if (decoded && decoded.jti) {
+        // New Single-Use Credit JWT flow
+        const claims = await redeem(token);
+        req.payment = {
+          txHash: '',
+          payer: claims.sub,
+          paidVia: 'credits',
+        };
+        return next();
+      } else {
+        // Legacy user balance flow
+        const userId = decoded.sub;
+        const userCredits = await getUserCredits(userId);
+        if (userCredits < modelConfig.creditCost) {
+          logger.warn(`User ${userId} has insufficient credits: has ${userCredits}, needs ${modelConfig.creditCost}`);
+          sendPaymentRequired('Insufficient credits. Watch ads or pay with USDC.');
+          return;
+        }
 
-      const userCredits = await getUserCredits(userId);
-      if (userCredits < modelConfig.creditCost) {
-        logger.warn(`User ${userId} has insufficient credits: has ${userCredits}, needs ${modelConfig.creditCost}`);
-        sendPaymentRequired('Insufficient credits. Watch ads or pay with USDC.');
+        const decremented = await decrementUserCredits(userId, modelConfig.creditCost);
+        if (!decremented) {
+          sendPaymentRequired('Failed to deduct credits. Please try again.');
+          return;
+        }
+
+        req.payment = {
+          txHash: '',
+          payer: userId,
+          paidVia: 'credits',
+        };
+        return next();
+      }
+    } catch (err: any) {
+      logger.warn(`Credit token verification/redemption failed: ${(err as Error).message}`);
+      if (err.message === 'CREDIT_ALREADY_SPENT') {
+        res.status(409).json({ error: 'credit already spent' });
         return;
       }
-
-      const decremented = await decrementUserCredits(userId, modelConfig.creditCost);
-      if (!decremented) {
-        sendPaymentRequired('Failed to deduct credits. Please try again.');
-        return;
-      }
-
-      req.payment = {
-        txHash: '',
-        payer: userId,
-        paidVia: 'credits',
-      };
-      return next();
-    } catch (err) {
-      logger.warn(`Invalid or expired JWT token received: ${(err as Error).message}`);
+      sendPaymentRequired('Invalid or expired credit token.');
+      return;
     }
   }
 

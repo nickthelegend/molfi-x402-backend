@@ -53,7 +53,16 @@ async function bootstrap() {
   app.listen(env.PORT, () => {
     logger.info(`Molfi Backend is listening on port ${env.PORT}`);
   });
+
+  // Run Merkle batcher every 60 seconds
+  setInterval(() => {
+    maybeAnchorBatch().catch((err) => {
+      logger.error(`Failed to anchor Merkle batch in cron: ${err.message}`);
+    });
+  }, 60_000);
 }
+
+import { maybeAnchorBatch } from './marketers/settlement.js';
 
 bootstrap().catch((err) => {
   console.error('Fatal bootstrap error:', err);

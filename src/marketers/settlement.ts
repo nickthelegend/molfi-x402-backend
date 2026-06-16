@@ -1,9 +1,17 @@
 import { StandardMerkleTree } from '@openzeppelin/merkle-tree';
 import { keccak256, encodePacked } from 'viem';
+import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { env } from '../env.js';
 import { walletClient, publicClient, operatorAccount } from '../chain/operator.js';
 import { Impression, MerkleBatch, Campaign } from './models.js';
 import { logger } from '../lib/logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const registryAddress = env.IMPRESSION_REGISTRY_ADDRESS;
 
 const registryAbi = [
   {
@@ -30,10 +38,12 @@ export function computeLeafHash(impression: {
   _id: string;
   campaignId: string;
   viewerSessionHash: string;
-  watchedMs: number;
-  completedAt: Date;
+  durationMs?: number;
+  watchedMs?: number;
+  completedAt?: Date;
 }): string {
-  const completedAtSeconds = Math.floor(impression.completedAt.getTime() / 1000);
+  const completedAtSeconds = Math.floor((impression.completedAt || new Date()).getTime() / 1000);
+  const duration = impression.durationMs !== undefined ? impression.durationMs : (impression.watchedMs || 0);
   return keccak256(
     encodePacked(
       ['string', 'string', 'string', 'uint256', 'uint256'],
@@ -41,111 +51,171 @@ export function computeLeafHash(impression: {
         impression._id,
         impression.campaignId,
         impression.viewerSessionHash,
-        BigInt(impression.watchedMs),
+        BigInt(duration),
         BigInt(completedAtSeconds),
       ]
     )
   );
 }
 
-export async function anchorBatch(): Promise<void> {
-  const pendingImpressions = await Impression.find({ batchId: { $exists: false } });
-  if (pendingImpressions.length === 0) {
-    logger.info('No pending impressions to anchor.');
-    return;
-  }
+export async function maybeAnchorBatch(): Promise<void> {
+  try {
+    const pending = await Impression.find({ status: 'claimed', batchId: { $exists: false } })
+      .sort({ completedAt: 1 })
+      .lean();
 
-  logger.info(`Starting anchor batch for ${pendingImpressions.length} impressions...`);
-
-  // Compute leaf hashes and build Merkle Tree
-  const leavesData = pendingImpressions.map((imp) => {
-    const leafHash = computeLeafHash(imp);
-    // Update leafHash field on document
-    imp.leafHash = leafHash;
-    return {
-      impression: imp,
-      leafHash,
-    };
-  });
-
-  const leaves = leavesData.map((d) => [d.leafHash]);
-  const tree = StandardMerkleTree.of(leaves, ['bytes32']);
-  const root = tree.root;
-
-  // Sum total payouts based on campaign bids
-  let totalPayoutDecimals = 0n;
-  for (const item of leavesData) {
-    const campaign = await Campaign.findById(item.impression.campaignId);
-    if (campaign) {
-      const bid = parseFloat(campaign.bidPerViewUsdc);
-      totalPayoutDecimals += BigInt(Math.round(bid * 1000000));
+    if (pending.length === 0) {
+      return;
     }
-  }
 
-  const registryAddress = env.IMPRESSION_REGISTRY_ADDRESS;
-  const isFallbackAddress = !registryAddress || registryAddress === '0x0000000000000000000000000000000000000000';
+    const isDev = env.NODE_ENV === 'development' || env.NODE_ENV === 'test';
+    const BATCH_THRESHOLD = isDev ? 3 : 50;
+    const BATCH_MAX_AGE_MS = isDev ? 5000 : 30 * 60 * 1000;
 
-  let batchId = Math.floor(Date.now() / 1000); // fallback batch ID
-  let anchorTxHash = '0x' + 'a'.repeat(64); // mock tx hash fallback
+    const oldest = pending[0].completedAt ? pending[0].completedAt.getTime() : Date.now();
+    if (pending.length < BATCH_THRESHOLD && Date.now() - oldest < BATCH_MAX_AGE_MS) {
+      return;
+    }
 
-  if (!isFallbackAddress) {
-    try {
-      logger.info(`Sending anchor transaction to ImpressionRegistry at ${registryAddress}...`);
-      // Call contract anchor()
-      const txHash = await walletClient.writeContract({
+    logger.info(`Starting anchor batch for ${pending.length} impressions...`);
+
+    // Format leaves
+    const leaves = pending.map((p) => {
+      const completedAtSeconds = Math.floor((p.completedAt || new Date()).getTime() / 1000);
+      return [
+        p._id.toString(),
+        p.campaignId.toString(),
+        p.viewerSessionHash,
+        p.durationMs.toString(),
+        completedAtSeconds.toString(),
+      ];
+    });
+
+    const tree = StandardMerkleTree.of(leaves, ['string', 'string', 'string', 'uint256', 'uint256']);
+    const root = tree.root;
+
+    // Sum total payouts
+    const totalPayoutDecimals = pending.reduce((s, p) => {
+      const bid = parseFloat(p.bidPaidUsdc);
+      return s + BigInt(Math.round(bid * 1e6));
+    }, 0n);
+
+    let batchId = Math.floor(Date.now() / 1000);
+    let anchorTxHash = '0x' + 'a'.repeat(64);
+
+    const isFallbackAddress = !registryAddress || registryAddress === '0x0000000000000000000000000000000000000000';
+
+    if (!isFallbackAddress) {
+      logger.info(`Submitting anchor transaction to contract ${registryAddress}...`);
+      const hash = await walletClient.writeContract({
         address: registryAddress as `0x${string}`,
         abi: registryAbi,
         functionName: 'anchor',
-        args: [root as `0x${string}`, BigInt(pendingImpressions.length), totalPayoutDecimals],
+        args: [root as `0x${string}`, BigInt(pending.length), totalPayoutDecimals],
       });
 
-      logger.info(`Anchor tx submitted: ${txHash}. Waiting for block inclusion...`);
-      anchorTxHash = txHash;
-      
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 30000 });
-      logger.info(`Anchor tx block inclusion receipt status: ${receipt.status}`);
-
-      // Query last batchId from contract
-      const contractBatchId = await publicClient.readContract({
-        address: registryAddress as `0x${string}`,
-        abi: registryAbi,
-        functionName: 'lastBatchId',
-      }) as bigint;
-      
-      batchId = Number(contractBatchId);
-    } catch (error) {
-      logger.warn(`On-chain anchoring failed: ${(error as Error).message}. Using mock/fallback anchor.`);
-    }
-  } else {
-    logger.warn('ImpressionRegistry address is not deployed (using fallback 0x00...00). Mocking anchor.');
-  }
-
-  // Create MerkleBatch record
-  const batch = new MerkleBatch({
-    _id: batchId,
-    root,
-    impressionCount: pendingImpressions.length,
-    totalPayoutUsdc: (Number(totalPayoutDecimals) / 1000000).toFixed(6),
-    anchorTxHash,
-    anchoredAt: new Date(),
-  });
-  await batch.save();
-
-  // Save Merkle Tree proofs and update Impression records
-  for (const item of leavesData) {
-    const proof = tree.getProof([item.leafHash]);
-    
-    await Impression.updateOne(
-      { _id: item.impression._id },
-      {
-        $set: {
-          leafHash: item.leafHash,
-          batchId,
-          settlementTxHash: anchorTxHash,
-        },
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30000 });
+      if (receipt.status !== 'success') {
+        throw new Error('On-chain anchor transaction reverted');
       }
-    );
-  }
 
-  logger.info(`Anchored batch ${batchId} with Merkle Root: ${root}. ${pendingImpressions.length} impressions updated.`);
+      anchorTxHash = hash;
+
+      // Extract batchId from topics[1] of BatchAnchored event log
+      const regLog = receipt.logs.find(l => l.address.toLowerCase() === registryAddress.toLowerCase());
+      if (regLog && regLog.topics[1]) {
+        batchId = Number(BigInt(regLog.topics[1]));
+      } else {
+        // Fallback reading contract directly
+        const lastBatchVal = await publicClient.readContract({
+          address: registryAddress as `0x${string}`,
+          abi: registryAbi,
+          functionName: 'lastBatchId',
+        });
+        batchId = Number(lastBatchVal);
+      }
+    } else {
+      logger.warn('ImpressionRegistry address not deployed (using fallback 0x00...00). Mocking anchor.');
+    }
+
+    // Dump leaves & proofs to public directory
+    const batchesDir = path.resolve(__dirname, '../../../public/batches');
+    if (!fs.existsSync(batchesDir)) {
+      fs.mkdirSync(batchesDir, { recursive: true });
+    }
+
+    const dumpData = {
+      batchId,
+      root,
+      leaves: pending.map((p, idx) => {
+        const completedAtSeconds = Math.floor((p.completedAt || new Date()).getTime() / 1000);
+        const leafHash = keccak256(
+          encodePacked(
+            ['string', 'string', 'string', 'uint256', 'uint256'],
+            [
+              p._id.toString(),
+              p.campaignId.toString(),
+              p.viewerSessionHash,
+              BigInt(p.durationMs),
+              BigInt(completedAtSeconds),
+            ]
+          )
+        );
+        return {
+          id: p._id,
+          leafHash,
+          proof: tree.getProof(idx),
+        };
+      }),
+    };
+
+    fs.writeFileSync(path.join(batchesDir, `${batchId}.json`), JSON.stringify(dumpData, null, 2));
+
+    // Save MerkleBatch record
+    const batch = new MerkleBatch({
+      _id: batchId,
+      batchId,
+      root,
+      impressionCount: pending.length,
+      totalPayoutUsdc: (Number(totalPayoutDecimals) / 1e6).toFixed(6),
+      anchorTxHash,
+      anchoredAt: new Date(),
+      fileUrl: `/batches/${batchId}.json`,
+    });
+    await batch.save();
+
+    // Update Impression records in DB
+    for (let idx = 0; idx < pending.length; idx++) {
+      const p = pending[idx];
+      const completedAtSeconds = Math.floor((p.completedAt || new Date()).getTime() / 1000);
+      const leafHash = keccak256(
+        encodePacked(
+          ['string', 'string', 'string', 'uint256', 'uint256'],
+          [
+            p._id.toString(),
+            p.campaignId.toString(),
+            p.viewerSessionHash,
+            BigInt(p.durationMs),
+            BigInt(completedAtSeconds),
+          ]
+        )
+      );
+
+      await Impression.updateOne(
+        { _id: p._id },
+        {
+          $set: {
+            batchId,
+            leafHash,
+            settlementTxHash: anchorTxHash,
+          },
+        }
+      );
+    }
+
+    logger.info(`Successfully anchored Merkle Batch #${batchId}`);
+  } catch (error) {
+    logger.error(`Error in maybeAnchorBatch: ${(error as Error).message}`);
+  }
 }
+export { maybeAnchorBatch as anchorBatch };

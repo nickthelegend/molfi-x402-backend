@@ -1,19 +1,34 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../env.js';
+import { randomUUID } from 'node:crypto';
 
-export interface CreditJwtPayload {
-  sub: string;
-  credits: number;
+export interface CreditClaims {
+  jti: string;                // unique token id; primary key in spent collection
+  sub: string;                // viewer session hash
+  imp: string;                // impressionId — provenance audit
+  amt: number;                // 1 credit
+  exp: number;                // 5 minutes expiry
+}
+
+export function mintCredit(impressionId: string, sessionHash: string): string {
+  const claims: CreditClaims = {
+    jti: randomUUID(),
+    sub: sessionHash,
+    imp: impressionId,
+    amt: 1,
+    exp: Math.floor(Date.now() / 1000) + 5 * 60,
+  };
+  return jwt.sign(claims, env.JWT_SECRET, { algorithm: 'HS256' });
 }
 
 export function signCreditToken(userId: string, currentCredits: number): string {
-  const payload: CreditJwtPayload = {
+  const payload = {
     sub: userId,
     credits: currentCredits,
   };
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '5m', algorithm: 'HS256' });
 }
 
-export function verifyCreditToken(token: string): CreditJwtPayload {
-  return jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as CreditJwtPayload;
+export function verifyCreditToken(token: string): any {
+  return jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] });
 }
