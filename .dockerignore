@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.git
+.vercel
+cache
+artifacts
+coverage
+*.sqlite
+*.db

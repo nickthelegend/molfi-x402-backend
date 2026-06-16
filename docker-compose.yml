@@ -1,0 +1,11 @@
+services:
+  molfi-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: molfi-backend
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    restart: unless-stopped

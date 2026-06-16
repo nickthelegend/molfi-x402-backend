@@ -47,6 +47,9 @@ importers:
       pino:
         specifier: ^9.4.0
         version: 9.14.0
+      pino-pretty:
+        specifier: ^11.2.2
+        version: 11.3.0
       sharp:
         specifier: ^0.35.1
         version: 0.35.1
@@ -99,9 +102,6 @@ importers:
       hardhat-gas-reporter:
         specifier: ^2.3.0
         version: 2.3.0(hardhat@2.28.6(ts-node@10.9.2(@types/node@20.19.43)(typescript@5.9.3))(typescript@5.9.3))(typescript@5.9.3)(zod@3.25.76)
-      pino-pretty:
-        specifier: ^11.2.2
-        version: 11.3.0
       solc:
         specifier: ^0.8.35
         version: 0.8.35
