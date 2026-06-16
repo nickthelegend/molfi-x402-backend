@@ -16,6 +16,11 @@ import { signClickToken, verifyClickToken } from './click.js';
 import { slotRequestSchema, heartbeatInputSchema, claimInputSchema } from './schemas.js';
 import { requireMarketer } from '../marketers/routes.js';
 import { verifyFuji } from '../chain/verify-fuji.js';
+import { requireUserAuth } from './auth.js';
+import { selectNextAd } from './selector.js';
+import { Campaign as AdCampaign, AdImpression } from './models.js';
+import { verifyImpression } from './safety.js';
+import { checkAndIncrement } from './rateLimit.js';
 
 export const adsRouter = Router();
 
@@ -160,6 +165,49 @@ adsRouter.post('/v1/ads/heartbeat', async (req: any, res: any) => {
 adsRouter.post('/v1/ads/claim', async (req: any, res: any) => {
   // Support BOTH the new verification flow and the old claim flow
   const body = req.body || {};
+
+  if (body.sessionId) {
+    // Authenticate user
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authorization header with Bearer token is required' });
+    }
+    const token = authHeader.split(' ')[1];
+    let viewer: string;
+    try {
+      const decoded = verifyCreditToken(token);
+      viewer = decoded.sub.toLowerCase();
+    } catch (error) {
+      return res.status(401).json({ error: 'Invalid or expired credit token' });
+    }
+
+    const { sessionId, heartbeats, watchedMs } = req.body;
+    const imp = await AdImpression.findOne({ sessionId, viewer, status: "PENDING" });
+    if (!imp) return res.status(404).json({ error: "no_session" });
+
+    imp.heartbeats = heartbeats;
+    imp.watchedMs  = watchedMs;
+    imp.endedAt    = new Date();
+
+    const safety = await verifyImpression(imp);
+    imp.safetyScore = safety.score;
+
+    if (!safety.ok) {
+      imp.status = "REJECTED"; 
+      imp.rejectReason = safety.reasons.join("; ");
+      await imp.save();
+      return res.status(400).json({ error: "rejected", reasons: safety.reasons });
+    }
+
+    imp.status = "CLAIMED";
+    await imp.save();
+
+    // Increment viewer credits balance in DB and return the updated credit token
+    const newBalance = await addUserCredits(viewer, 5);
+    const creditToken = signCreditToken(viewer, newBalance);
+
+    return res.json({ ok: true, sessionId, rewardPending: true, jwt: creditToken, credits: newBalance });
+  }
 
   if (body.impressionToken) {
     // New flow with heartbeat verifier
@@ -405,6 +453,32 @@ adsRouter.post('/v1/privacy/delete-session', async (req: any, res) => {
   }
 });
 
+import { verifySiweSignature } from '../marketers/auth.js';
+
+const userNonces = new Map<string, string>();
+
+adsRouter.post('/v1/users/auth/nonce', async (req: any, res: any) => {
+  const { walletAddress } = req.body;
+  if (!walletAddress) {
+    return res.status(400).json({ error: 'walletAddress is required' });
+  }
+  const nonce = crypto.randomBytes(8).toString('hex');
+  userNonces.set(walletAddress.toLowerCase(), nonce);
+  res.json({ nonce });
+});
+
+adsRouter.post('/v1/users/auth/verify', async (req: any, res: any) => {
+  const { message, signature } = req.body;
+  try {
+    const address = await verifySiweSignature(message, signature);
+    const credits = await getUserCredits(address);
+    const token = signCreditToken(address, credits);
+    res.json({ token, walletAddress: address });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'SIWE verification failed' });
+  }
+});
+
 // 6. GET /v1/credits/balance (existing balance route)
 adsRouter.get('/v1/credits/balance', async (req, res) => {
   const authHeader = req.headers.authorization;
@@ -421,4 +495,50 @@ adsRouter.get('/v1/credits/balance', async (req, res) => {
   } catch (error) {
     res.status(401).json({ error: 'Invalid or expired credit token' });
   }
+});
+
+// 1. Viewer asks for next ad
+adsRouter.post("/v1/ads/start", requireUserAuth, async (req: any, res: any) => {
+  const viewer = req.user.address.toLowerCase();
+  const { surface, kind, modelInUse } = req.body as { surface: "chat-web"|"extension"; kind: "text"|"image"|"video"; modelInUse?: string };
+  
+  try { 
+    await checkAndIncrement(viewer); 
+  } catch (err: any) { 
+    return res.status(429).json({ error: "rate_limited" }); 
+  }
+
+  const ad = await selectNextAd({ viewer, surface, kind, modelInUse });
+  if (!ad) return res.status(204).end();
+
+  const sessionId = "0x" + crypto.randomBytes(16).toString("hex");
+  const nonceHex  = "0x" + crypto.randomBytes(16).toString("hex");
+  const receiptId = "0x" + crypto.randomBytes(32).toString("hex");
+
+  await AdImpression.create({
+    receiptId,
+    sessionId,
+    campaignId: ad.onchainId,
+    viewer,
+    surface,
+    nonceHex,
+    startedAt: new Date(),
+    durationMs: ad.durationMs ?? 5000,
+    status: "PENDING",
+  });
+
+  res.json({
+    sessionId,
+    nonceHex,
+    campaignId: ad.onchainId,
+    kind: ad.kind,
+    contentURI: ad.contentURI,
+    thumbnailCid: ad.thumbnailCid,
+    title: ad.title,
+    description: ad.description,
+    ctaText: ad.ctaText,
+    ctaUrl: ad.ctaUrl,
+    durationMs: ad.durationMs ?? 5000,
+    rewardUsdc: ad.rewardPerImpression,
+  });
 });

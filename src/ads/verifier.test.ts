@@ -14,8 +14,8 @@ describe('Verifier Tests', () => {
   });
 
   beforeEach(async () => {
-    await Campaign.deleteMany({});
-    await Impression.deleteMany({});
+    await Campaign.deleteMany({ marketerId: '0xmarketer' });
+    await Impression.deleteMany({ marketerId: '0xmarketer' });
     await AdHeartbeat.deleteMany({});
   });
 

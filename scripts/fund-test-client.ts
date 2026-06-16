@@ -20,11 +20,11 @@ const erc20Abi = [
 async function main() {
   console.log(`🏦 TRANSFERRING FUNDS TO TEST CLIENT: ${recipient}...`);
 
-  // 1. Transfer AVAX (Gas)
-  console.log('Sending 0.05 AVAX...');
+  // 1. Transfer AVAX (Gas) - Optional since it has enough
+  console.log('Sending 0.01 AVAX...');
   const avaxHash = await walletClient.sendTransaction({
     to: recipient,
-    value: parseEther('0.05'),
+    value: parseEther('0.01'),
   });
   console.log(`AVAX TX Hash: ${avaxHash}`);
   await publicClient.waitForTransactionReceipt({ hash: avaxHash });

@@ -2,6 +2,8 @@ import { app } from './app.js';
 import { env } from './env.js';
 import { verifyFuji } from './chain/verify-fuji.js';
 import { logger } from './lib/logger.js';
+import { startIndexer } from './ads/indexer.js';
+import { startAnchorWorker } from './ads/anchor.js';
 async function bootstrap() {
     logger.info('Starting MOLFI.FUN Backend...');
     const fuji = await verifyFuji();
@@ -42,10 +44,43 @@ async function bootstrap() {
   - Circle USDC Faucet: https://faucet.circle.com/
 `);
     }
+    // OpenRouter validation probe on boot
+    async function validateOpenRouter() {
+        if (!env.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY.includes('<') || env.OPENROUTER_API_KEY === 'mock-key') {
+            throw new Error('OPENROUTER_API_KEY is not configured or is a mock key');
+        }
+        const res = await fetch('https://openrouter.ai/api/v1/auth/key', {
+            headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` },
+        });
+        if (!res.ok) {
+            const body = await res.text();
+            throw new Error(`OpenRouter auth failed on boot: ${res.status} — ${body}`);
+        }
+        const data = (await res.json());
+        console.log(`[openrouter] OK — credit: $${data.data?.usage ?? 0} / $${data.data?.limit ?? '∞'}`);
+    }
+    if (env.NODE_ENV === 'production') {
+        await validateOpenRouter();
+    }
+    else {
+        validateOpenRouter().catch((err) => {
+            logger.warn(`[openrouter] Validation failed: ${err.message}`);
+        });
+    }
     app.listen(env.PORT, () => {
         logger.info(`Molfi Backend is listening on port ${env.PORT}`);
     });
+    // Start new ad economy indexer and anchor worker
+    startIndexer();
+    startAnchorWorker();
+    // Run legacy Merkle batcher every 60 seconds
+    setInterval(() => {
+        maybeAnchorBatch().catch((err) => {
+            logger.error(`Failed to anchor Merkle batch in cron: ${err.message}`);
+        });
+    }, 60_000);
 }
+import { maybeAnchorBatch } from './marketers/settlement.js';
 bootstrap().catch((err) => {
     console.error('Fatal bootstrap error:', err);
     process.exit(1);

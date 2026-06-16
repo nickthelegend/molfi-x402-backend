@@ -2,6 +2,8 @@ import { app } from './app.js';
 import { env } from './env.js';
 import { verifyFuji } from './chain/verify-fuji.js';
 import { logger } from './lib/logger.js';
+import { startIndexer } from './ads/indexer.js';
+import { startAnchorWorker } from './ads/anchor.js';
 
 async function bootstrap() {
   logger.info('Starting MOLFI.FUN Backend...');
@@ -78,7 +80,11 @@ async function bootstrap() {
     logger.info(`Molfi Backend is listening on port ${env.PORT}`);
   });
 
-  // Run Merkle batcher every 60 seconds
+  // Start new ad economy indexer and anchor worker
+  startIndexer();
+  startAnchorWorker();
+
+  // Run legacy Merkle batcher every 60 seconds
   setInterval(() => {
     maybeAnchorBatch().catch((err) => {
       logger.error(`Failed to anchor Merkle batch in cron: ${err.message}`);

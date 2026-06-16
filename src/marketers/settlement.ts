@@ -80,7 +80,7 @@ export async function maybeAnchorBatch(): Promise<void> {
     logger.info(`Starting anchor batch for ${pending.length} impressions...`);
 
     // Format leaves
-    const leaves = pending.map((p) => {
+    const leaves = pending.map((p: any) => {
       const completedAtSeconds = Math.floor((p.completedAt || new Date()).getTime() / 1000);
       return [
         p._id.toString(),
@@ -95,7 +95,7 @@ export async function maybeAnchorBatch(): Promise<void> {
     const root = tree.root;
 
     // Sum total payouts
-    const totalPayoutDecimals = pending.reduce((s, p) => {
+    const totalPayoutDecimals = pending.reduce((s, p: any) => {
       const bid = parseFloat(p.bidPaidUsdc);
       return s + BigInt(Math.round(bid * 1e6));
     }, 0n);
@@ -150,7 +150,7 @@ export async function maybeAnchorBatch(): Promise<void> {
     const dumpData = {
       batchId,
       root,
-      leaves: pending.map((p, idx) => {
+      leaves: pending.map((p: any, idx) => {
         const completedAtSeconds = Math.floor((p.completedAt || new Date()).getTime() / 1000);
         const leafHash = keccak256(
           encodePacked(
@@ -189,7 +189,7 @@ export async function maybeAnchorBatch(): Promise<void> {
 
     // Update Impression records in DB
     for (let idx = 0; idx < pending.length; idx++) {
-      const p = pending[idx];
+      const p = pending[idx] as any;
       const completedAtSeconds = Math.floor((p.completedAt || new Date()).getTime() / 1000);
       const leafHash = keccak256(
         encodePacked(

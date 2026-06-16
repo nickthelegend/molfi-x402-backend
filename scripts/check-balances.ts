@@ -39,7 +39,7 @@ async function checkBalance(name: string, address: string) {
 
 async function main() {
   const operatorAddress = '0x635ee3EE5D1bADA3c2EF9b3A4a6c741a8460AeBE';
-  const testClientAddress = env.TEST_CLIENT_ADDRESS || '0x8392443807F6F39F2C8E4b7E1aB3a2E0033d498a';
+  const testClientAddress = process.env.TEST_CLIENT_ADDRESS || '0x8392443807F6F39F2C8E4b7E1aB3a2E0033d498a';
   
   await checkBalance('Operator', operatorAddress);
   await checkBalance('Test Client', testClientAddress);

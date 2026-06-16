@@ -28,8 +28,15 @@ describe('Credits and Ads Tests', () => {
   });
 
   beforeEach(async () => {
-    await User.deleteMany({});
-    await AdView.deleteMany({});
+    const testIds = [
+      '0x1234567890123456789012345678901234567890',
+      'test-user-atomic',
+      '0xtestusercreditssuccess',
+      '0xtestuserchat',
+      '0xtestusernocredits'
+    ];
+    await User.deleteMany({ _id: { $in: testIds } });
+    await AdView.deleteMany({ user_id: { $in: testIds } });
   });
 
   it('JWT sign and verify round-trip works', () => {

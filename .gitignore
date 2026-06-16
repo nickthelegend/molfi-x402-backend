@@ -4,3 +4,7 @@ dist/
 data/*.sqlite
 *.db
 *.sqlite3
+/artifacts
+/cache
+/coverage
+coverage.json
