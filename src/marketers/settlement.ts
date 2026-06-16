@@ -1,4 +1,5 @@
 import { StandardMerkleTree } from '@openzeppelin/merkle-tree';
+import * as os from 'os';
 import { keccak256, encodePacked } from 'viem';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -142,7 +143,9 @@ export async function maybeAnchorBatch(): Promise<void> {
     }
 
     // Dump leaves & proofs to public directory
-    const batchesDir = path.resolve(__dirname, '../../../public/batches');
+    const batchesDir = process.env.VERCEL
+      ? path.join(os.tmpdir(), 'molfi-batches')
+      : path.resolve(__dirname, '../../../public/batches');
     if (!fs.existsSync(batchesDir)) {
       fs.mkdirSync(batchesDir, { recursive: true });
     }

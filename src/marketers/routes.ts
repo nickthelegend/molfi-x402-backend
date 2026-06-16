@@ -22,16 +22,48 @@ import { verifyImpressionProof } from './verify.js';
 import { logger } from '../lib/logger.js';
 import { publicClient, walletClient, operatorAccount } from '../chain/operator.js';
 
+import * as os from 'os';
+
 export const marketersRouter = Router();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Ensure public/uploads directory exists
-const uploadsDir = path.resolve(__dirname, '../../../public/uploads');
+export const uploadsDir = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'molfi-uploads')
+  : path.resolve(__dirname, '../../../public/uploads');
+
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
+
+export const batchesDir = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'molfi-batches')
+  : path.resolve(__dirname, '../../../public/batches');
+
+if (!fs.existsSync(batchesDir)) {
+  fs.mkdirSync(batchesDir, { recursive: true });
+}
+
+// Serve uploaded creatives and anchored Merkle batches dynamically
+marketersRouter.get('/uploads/:filename', (req, res) => {
+  const filepath = path.join(uploadsDir, req.params.filename);
+  if (fs.existsSync(filepath)) {
+    res.sendFile(filepath);
+  } else {
+    res.status(404).json({ error: 'File not found' });
+  }
+});
+
+marketersRouter.get('/batches/:filename', (req, res) => {
+  const filepath = path.join(batchesDir, req.params.filename);
+  if (fs.existsSync(filepath)) {
+    res.sendFile(filepath);
+  } else {
+    res.status(404).json({ error: 'File not found' });
+  }
+});
 
 // Middleware to authorize marketer session
 export async function requireMarketer(req: any, res: any, next: any) {

@@ -27,7 +27,9 @@
     "pino": "^9.4.0",
     "sharp": "^0.35.1",
     "viem": "^2.21.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "@img/sharp-linux-x64": "0.35.1",
+    "@img/sharp-libvips-linux-x64": "1.3.0"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-network-helpers": "^1.1.2",
@@ -50,5 +52,14 @@
     "tsx": "^4.19.1",
     "typescript": "^5.5.4",
     "vitest": "^2.1.1"
+  },
+  "pnpm": {
+    "supportedArchitectures": {
+      "os": ["current", "linux"],
+      "cpu": ["current", "x64", "arm64"]
+    },
+    "onlyBuiltDependencies": [
+      "sharp"
+    ]
   }
 }
