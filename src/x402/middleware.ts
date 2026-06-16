@@ -1,11 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
+import { recoverTypedDataAddress } from 'viem';
 import { MODELS_REGISTRY } from '../chat/models.js';
 import { env } from '../env.js';
-import { operatorAccount } from '../chain/operator.js';
+import { operatorAccount, publicClient } from '../chain/operator.js';
 import { verifyPayment, settlePayment } from './facilitator.js';
 import { logger } from '../lib/logger.js';
 import { getUserCredits, decrementUserCredits } from '../credits/store.js';
 import { verifyCreditToken } from '../credits/jwt.js';
+import { isNonceReplayed } from './nonce.js';
 
 declare global {
   namespace Express {
@@ -18,6 +21,23 @@ declare global {
     }
   }
 }
+
+const xPaymentZodSchema = z.object({
+  x402Version: z.literal(1),
+  scheme: z.literal('exact'),
+  network: z.literal('avalanche-fuji'),
+  payload: z.object({
+    signature: z.string().regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid signature format'),
+    authorization: z.object({
+      from: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid from address'),
+      to: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid to address'),
+      value: z.string().regex(/^\d+$/, 'Invalid value amount'),
+      validAfter: z.number().int().nonnegative(),
+      validBefore: z.number().int().positive(),
+      nonce: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid 32-byte hex nonce'),
+    }),
+  }),
+});
 
 export async function x402Middleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   const { model } = req.body;
@@ -95,28 +115,111 @@ export async function x402Middleware(req: Request, res: Response, next: NextFunc
   }
 
   try {
-    const decodedPayload = JSON.parse(
-      Buffer.from(xPaymentHeader as string, 'base64').toString('utf-8')
-    );
-
-    if (
-      decodedPayload.x402Version !== 1 ||
-      decodedPayload.scheme !== 'exact' ||
-      decodedPayload.network !== 'avalanche-fuji'
-    ) {
-      res.status(400).json({ error: 'Invalid X-PAYMENT protocol payload scheme or network' });
+    let rawPayload: any;
+    try {
+      rawPayload = JSON.parse(Buffer.from(xPaymentHeader as string, 'base64').toString('utf-8'));
+    } catch (e) {
+      res.status(400).json({ error: 'Malformed Base64 payload in X-PAYMENT header' });
       return;
     }
 
-    const { payload } = decodedPayload;
-    if (!payload || !payload.signature || !payload.authorization) {
-      res.status(400).json({ error: 'Malformed X-PAYMENT payload content' });
+    // Zod Validation
+    const parsedPayloadResult = xPaymentZodSchema.safeParse(rawPayload);
+    if (!parsedPayloadResult.success) {
+      res.status(400).json({
+        error: `Invalid X-PAYMENT protocol payload: ${parsedPayloadResult.error.message}`,
+      });
       return;
     }
 
+    const { payload } = parsedPayloadResult.data;
+
+    // Hardening checks
+    if (payload.authorization.to.toLowerCase() !== operatorAccount.address.toLowerCase()) {
+      res.status(400).json({ error: `recipient address mismatch: expected ${operatorAccount.address}` });
+      return;
+    }
+
+    if (BigInt(payload.authorization.value) < BigInt(modelConfig.usdcCostDecimals)) {
+      res.status(400).json({ error: `value mismatch: expected minimum ${modelConfig.usdcCostDecimals}` });
+      return;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.authorization.validBefore < now + 30) {
+      res.status(400).json({ error: 'signature validBefore is too close to expiry or already expired' });
+      return;
+    }
+
+    if (payload.authorization.validAfter > now) {
+      res.status(400).json({ error: 'signature is not valid yet (validAfter in future)' });
+      return;
+    }
+
+    // Replay attack protection
+    const isReplayed = await isNonceReplayed(payload.authorization.from, payload.authorization.nonce);
+    if (isReplayed) {
+      res.status(400).json({ error: 'nonce already used' });
+      return;
+    }
+
+    // Signature Recovery
+    try {
+      const recoveredAddress = await recoverTypedDataAddress({
+        domain: {
+          name: 'USD Coin',
+          version: '2',
+          chainId: 43113,
+          verifyingContract: env.FUJI_USDC_ADDRESS as `0x${string}`,
+        },
+        types: {
+          TransferWithAuthorization: [
+            { name: 'from', type: 'address' },
+            { name: 'to', type: 'address' },
+            { name: 'value', type: 'uint256' },
+            { name: 'validAfter', type: 'uint256' },
+            { name: 'validBefore', type: 'uint256' },
+            { name: 'nonce', type: 'bytes32' },
+          ],
+        },
+        primaryType: 'TransferWithAuthorization',
+        message: {
+          from: payload.authorization.from as `0x${string}`,
+          to: payload.authorization.to as `0x${string}`,
+          value: BigInt(payload.authorization.value),
+          validAfter: BigInt(payload.authorization.validAfter),
+          validBefore: BigInt(payload.authorization.validBefore),
+          nonce: payload.authorization.nonce as `0x${string}`,
+        },
+        signature: payload.signature as `0x${string}`,
+      });
+
+      if (recoveredAddress.toLowerCase() !== payload.authorization.from.toLowerCase()) {
+        res.status(400).json({ error: 'signature recovery validation failed' });
+        return;
+      }
+    } catch (e) {
+      res.status(400).json({ error: `signature recovery failed: ${(e as Error).message}` });
+      return;
+    }
+
+    // Verify operator address setup
     await verifyPayment(payload, modelConfig.usdcCostDecimals.toString());
 
+    // Settle Payment
     const txHash = await settlePayment(payload);
+
+    // Wait for inclusion block
+    logger.info(`Waiting for block inclusion of tx: ${txHash}`);
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash as `0x${string}`,
+      timeout: 30000,
+    });
+
+    if (receipt.status !== 'success') {
+      res.status(402).json({ error: 'On-chain signature settlement transaction reverted' });
+      return;
+    }
 
     req.payment = {
       txHash,

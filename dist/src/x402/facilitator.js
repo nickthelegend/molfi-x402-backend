@@ -41,6 +41,35 @@ export async function settlePayment(payload) {
     if (sig.length !== 132) {
         throw new Error(`Invalid signature length: expected 130 characters + 0x prefix, got ${sig.length}`);
     }
+    // First try remote facilitator URL
+    if (env.X402_FACILITATOR_URL && env.X402_FACILITATOR_URL !== 'https://x402.org/facilitator') {
+        try {
+            logger.info(`Attempting remote x402 facilitator settlement at ${env.X402_FACILITATOR_URL}...`);
+            const response = await fetch(`${env.X402_FACILITATOR_URL}/settle`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    signature,
+                    authorization,
+                    network: 'avalanche-fuji',
+                    asset: env.FUJI_USDC_ADDRESS,
+                }),
+            });
+            if (response.ok) {
+                const json = await response.json();
+                const hash = json.txHash || json.transaction;
+                if (hash) {
+                    logger.info(`Payment settled via remote facilitator. Tx: ${hash}`);
+                    return hash;
+                }
+            }
+            logger.warn(`Remote facilitator returned status ${response.status}. Falling back to direct operator settlement.`);
+        }
+        catch (err) {
+            logger.warn(`Remote facilitator request failed: ${err.message}. Falling back to direct operator settlement.`);
+        }
+    }
+    // Fallback to local direct operator broadcast
     const r = slice(sig, 0, 32);
     const s = slice(sig, 32, 64);
     const signatureBytes = hexToBytes(sig);
@@ -65,7 +94,7 @@ export async function settlePayment(payload) {
                 s,
             ],
         });
-        logger.info(`Payment settled. Tx hash: ${txHash}`);
+        logger.info(`Payment settled directly. Tx hash: ${txHash}`);
         return txHash;
     }
     catch (error) {
