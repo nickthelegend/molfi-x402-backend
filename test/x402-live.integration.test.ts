@@ -66,6 +66,9 @@ describe('x402 Live Fuji Integration Test', () => {
 
   it('2. Live payment settlement via EIP-3009 signatures', async () => {
     if (!clientPrivateKey) {
+      if (process.env.CI === 'true') {
+        throw new Error('TEST_CLIENT_PRIVATE_KEY is required in CI mode');
+      }
       console.warn('⚠️  TEST_CLIENT_PRIVATE_KEY not configured. Skipping live Fuji EIP-3009 settlement test.');
       expect(true).toBe(true);
       return;
@@ -80,6 +83,9 @@ describe('x402 Live Fuji Integration Test', () => {
     console.log(`Test client AVAX:    ${clientAvaxFormatted} AVAX`);
 
     if (parseFloat(clientAvaxFormatted) === 0) {
+      if (process.env.CI === 'true') {
+        throw new Error('Test client wallet has 0 AVAX in CI mode');
+      }
       console.warn('⚠️  Test client has 0 AVAX. Skipping live settlement.');
       expect(true).toBe(true);
       return;

@@ -55,7 +55,19 @@ chatRouter.post('/v1/chat/completions', x402Middleware, async (req, res) => {
     }
   } catch (error) {
     logger.error(`Error in /v1/chat/completions route: ${(error as Error).message}`);
-    sseWrite(res, { error: (error as Error).message });
-    res.end();
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: 'llm_upstream',
+        detail: (error as Error).message,
+        provider: 'openrouter',
+      });
+    } else {
+      sseWrite(res, {
+        error: 'llm_upstream',
+        detail: (error as Error).message,
+        provider: 'openrouter',
+      });
+      res.end();
+    }
   }
 });

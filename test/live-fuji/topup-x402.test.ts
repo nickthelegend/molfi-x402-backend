@@ -40,6 +40,9 @@ describe('topup-x402.test.ts - [live-fuji] Marketer billing topup via x402 USDC'
 
   it('should top up marketer balance using x402 EIP-3009 payment', async () => {
     if (!clientPrivateKey) {
+      if (process.env.CI === 'true') {
+        throw new Error('TEST_CLIENT_PRIVATE_KEY is required in CI mode');
+      }
       console.warn('⚠️  TEST_CLIENT_PRIVATE_KEY not configured. Skipping marketer live Fuji topup test.');
       expect(true).toBe(true);
       return;
@@ -54,6 +57,9 @@ describe('topup-x402.test.ts - [live-fuji] Marketer billing topup via x402 USDC'
     console.log(`Test client AVAX:    ${clientAvaxFormatted} AVAX`);
 
     if (parseFloat(clientAvaxFormatted) === 0) {
+      if (process.env.CI === 'true') {
+        throw new Error('Test client wallet has 0 AVAX in CI mode');
+      }
       console.warn('⚠️  Test client has 0 AVAX. Skipping live topup.');
       expect(true).toBe(true);
       return;

@@ -21,7 +21,7 @@ describe('Credits and Ads Tests', () => {
   });
 
   afterAll(async () => {
-    await mongoose.connection.close();
+    await mongoose.disconnect();
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });

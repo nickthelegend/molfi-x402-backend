@@ -105,7 +105,12 @@ export async function maybeAnchorBatch(): Promise<void> {
 
     const isFallbackAddress = !registryAddress || registryAddress === '0x0000000000000000000000000000000000000000';
 
-    if (!isFallbackAddress) {
+    if (isFallbackAddress) {
+      if (env.NODE_ENV === 'production') {
+        throw new Error('IMPRESSION_REGISTRY_ADDRESS missing in production');
+      }
+      logger.warn('ImpressionRegistry address not deployed (using fallback 0x00...00). Mocking anchor.');
+    } else {
       logger.info(`Submitting anchor transaction to contract ${registryAddress}...`);
       const hash = await walletClient.writeContract({
         address: registryAddress as `0x${string}`,
@@ -134,8 +139,6 @@ export async function maybeAnchorBatch(): Promise<void> {
         });
         batchId = Number(lastBatchVal);
       }
-    } else {
-      logger.warn('ImpressionRegistry address not deployed (using fallback 0x00...00). Mocking anchor.');
     }
 
     // Dump leaves & proofs to public directory

@@ -28,6 +28,9 @@ describe('impression-anchor.test.ts - [live-fuji] Impression anchoring', () => {
   it('should anchor batch of impressions on-chain or mock fallback', async () => {
     const clientPrivateKey = process.env.TEST_CLIENT_PRIVATE_KEY;
     if (!clientPrivateKey) {
+      if (process.env.CI === 'true') {
+        throw new Error('TEST_CLIENT_PRIVATE_KEY is required in CI mode');
+      }
       console.warn('⚠️  TEST_CLIENT_PRIVATE_KEY not configured. Skipping live Fuji impression anchoring test.');
       expect(true).toBe(true);
       return;
@@ -56,25 +59,38 @@ describe('impression-anchor.test.ts - [live-fuji] Impression anchoring', () => {
     if (!campaign) {
       campaign = new Campaign({
         marketerId: testMarketerAddress,
-        mp4Url: 'https://example.com/ad.mp4',
+        title: 'Live Test Campaign',
+        type: 'video',
+        creativeUrl: 'https://example.com/ad.mp4',
         durationMs: 15000,
         ctaUrl: 'https://molfi.fun',
         bidPerViewUsdc: '0.010000',
         budgetUsdc: '10.000000',
         spentUsdc: '0.000000',
         status: 'active',
-        frequencyCap: 0,
+        frequencyCapPerSessionPer4h: 1,
       });
       await campaign.save();
     }
 
     // Write 3 mock impressions to trigger batch in test mode
     const completedAt = new Date();
-    await Impression.create([
-      { campaignId: campaign._id.toString(), viewerSessionHash: 'session-1', watchedMs: 15000, completedAt, leafHash: 'h1' },
-      { campaignId: campaign._id.toString(), viewerSessionHash: 'session-2', watchedMs: 15000, completedAt, leafHash: 'h2' },
-      { campaignId: campaign._id.toString(), viewerSessionHash: 'session-3', watchedMs: 15000, completedAt, leafHash: 'h3' },
-    ]);
+    const impressionsData = Array.from({ length: 3 }).map((_, i) => ({
+      _id: new mongoose.Types.ObjectId().toString(),
+      token: `mock-token-${i}-${Math.random()}`,
+      campaignId: campaign._id.toString(),
+      marketerId: testMarketerAddress,
+      viewerSessionHash: `session-${i}`,
+      surface: 'frontend',
+      type: 'video' as const,
+      durationMs: 15000,
+      startedAt: new Date(completedAt.getTime() - 15000),
+      completedAt,
+      status: 'claimed',
+      bidPaidUsdc: '0.010000',
+      leafHash: `h${i}`,
+    }));
+    await Impression.create(impressionsData);
 
     // Force anchor
     await anchorBatch();

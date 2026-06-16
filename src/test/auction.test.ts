@@ -9,6 +9,10 @@ describe('Ad Auction Tests', () => {
     await connectDb();
   });
 
+  afterAll(async () => {
+    await mongoose.disconnect();
+  });
+
   beforeEach(async () => {
     await Campaign.deleteMany({});
     await Impression.deleteMany({});

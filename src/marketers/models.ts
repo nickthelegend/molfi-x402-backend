@@ -103,6 +103,7 @@ export interface IImpression {
   rejectionCode?: string;
   leafHash?: string; // keccak256
   batchId?: number; // once anchored
+  settlementTxHash?: string; // transaction hash where batch was anchored
   bidPaidUsdc: string;
 }
 
@@ -121,6 +122,7 @@ const impressionSchema = new Schema<IImpression>({
   rejectionCode: { type: String },
   leafHash: { type: String },
   batchId: { type: Number },
+  settlementTxHash: { type: String },
   bidPaidUsdc: { type: String, required: true }
 });
 
