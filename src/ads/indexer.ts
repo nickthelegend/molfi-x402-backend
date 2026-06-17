@@ -113,8 +113,66 @@ export async function reconcileAdMarket() {
   }
 }
 
+export async function syncAllCampaignsFromContract() {
+  try {
+    const nextCampaignId = await client.readContract({
+      address: MARKET,
+      abi: abi.abi,
+      functionName: "nextCampaignId",
+    }) as bigint;
+
+    console.log(`[indexer] Syncing all ${Number(nextCampaignId) - 1} campaigns from contract on startup...`);
+
+    for (let id = 1n; id < nextCampaignId; id++) {
+      const onchain = await client.readContract({
+        address: MARKET,
+        abi: abi.abi,
+        functionName: "campaigns",
+        args: [id]
+      }) as any;
+
+      const marketer = onchain[0];
+      const contentCid = onchain[1];
+      const contentURI = onchain[2];
+      const budgetRemaining = onchain[3];
+      const rewardPerImpression = onchain[4];
+      const startTime = new Date(Number(onchain[5]) * 1000);
+      const endTime = new Date(Number(onchain[6]) * 1000);
+      const kindNum = Number(onchain[7]);
+      const kind = ["TEXT", "IMAGE", "VIDEO"][kindNum];
+      const active = onchain[8];
+
+      await Campaign.updateOne(
+        { onchainId: Number(id) },
+        { 
+          $set: {
+            marketer: marketer.toLowerCase(),
+            contentCid: contentCid || "",
+            contentURI: contentURI || "",
+            kind,
+            rewardPerImpression: rewardPerImpression.toString(),
+            budgetRemaining: budgetRemaining.toString(),
+            startTime,
+            endTime,
+            active,
+          },
+          $setOnInsert: {
+            title: `Campaign #${id}`,
+          }
+        },
+        { upsert: true }
+      );
+    }
+    console.log(`[indexer] Sync complete!`);
+  } catch (err: any) {
+    console.error("[indexer] Error syncing all campaigns from contract on startup:", err.message);
+  }
+}
+
 export function startIndexer() {
   console.log("[indexer] Starting Fuji ad market events indexer daemon...");
-  reconcileAdMarket().catch(console.error);
+  syncAllCampaignsFromContract()
+    .then(() => reconcileAdMarket())
+    .catch(console.error);
   setInterval(() => reconcileAdMarket().catch(console.error), 15_000);
 }
