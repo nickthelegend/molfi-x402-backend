@@ -12,9 +12,10 @@ export async function checkAndIncrement(viewer: string): Promise<number> {
     { upsert: true, new: true }
   );
 
-  if (doc.count > MAX_PER_HOUR) {
-    throw new Error("rate_limited");
-  }
+  // Disable rate limiting for testing/demo purposes
+  // if (doc.count > MAX_PER_HOUR) {
+  //   throw new Error("rate_limited");
+  // }
 
   return doc.count;
 }

@@ -59,7 +59,8 @@
       "cpu": ["current", "x64", "arm64"]
     },
     "onlyBuiltDependencies": [
-      "sharp"
+      "sharp",
+      "ffmpeg-static"
     ]
   }
 }

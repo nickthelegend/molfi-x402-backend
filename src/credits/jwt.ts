@@ -16,7 +16,7 @@ export function mintCredit(impressionId: string, sessionHash: string): string {
     sub: sessionHash,
     imp: impressionId,
     amt: 1,
-    exp: Math.floor(Date.now() / 1000) + 5 * 60,
+    exp: Math.floor(Date.now() / 1000) + 24 * 3600,
   };
   return jwt.sign(claims, env.JWT_SECRET, { algorithm: 'HS256' });
 }
@@ -26,7 +26,7 @@ export function signCreditToken(userId: string, currentCredits: number): string 
     sub: userId,
     credits: currentCredits,
   };
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '5m', algorithm: 'HS256' });
+  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '24h', algorithm: 'HS256' });
 }
 
 export function verifyCreditToken(token: string): any {

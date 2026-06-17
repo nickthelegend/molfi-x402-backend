@@ -202,6 +202,24 @@ adsRouter.post('/v1/ads/claim', async (req: any, res: any) => {
     imp.status = "CLAIMED";
     await imp.save();
 
+    // Debit campaign budget
+    try {
+      const campaign = await AdCampaign.findOne({ onchainId: imp.campaignId });
+      if (campaign) {
+        const budgetRemaining = BigInt(campaign.budgetRemaining);
+        const rewardPerImpression = BigInt(campaign.rewardPerImpression);
+        const newBudget = budgetRemaining - rewardPerImpression;
+        campaign.budgetRemaining = (newBudget < 0n ? 0n : newBudget).toString();
+        if (newBudget <= 0n) {
+          campaign.active = false;
+        }
+        await campaign.save();
+        logger.info(`Session Ad Claim: Debited campaign ${campaign.onchainId} by ${rewardPerImpression}. Remaining: ${campaign.budgetRemaining}`);
+      }
+    } catch (err: any) {
+      logger.error(`Failed to debit campaign budget for impression ${imp._id}: ${err.message}`);
+    }
+
     // Increment viewer credits balance in DB and return the updated credit token
     const newBalance = await addUserCredits(viewer, 5);
     const creditToken = signCreditToken(viewer, newBalance);

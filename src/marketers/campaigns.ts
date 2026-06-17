@@ -115,6 +115,12 @@ campaignRouter.get("/v1/marketers/campaigns/:id", requireMarketerAuth, async (re
     return res.status(404).json({ error: "Campaign not found" });
   }
   
+  const impressionsCount = await AdImpression.countDocuments({
+    campaignId: campaign.onchainId,
+    status: { $in: ["CLAIMED", "ANCHORED"] }
+  });
+  const spentUsdc = (impressionsCount * Number(campaign.rewardPerImpression) / 1e6).toFixed(6);
+
   const mapped = {
     _id: campaign._id,
     onchainId: campaign.onchainId,
@@ -123,7 +129,7 @@ campaignRouter.get("/v1/marketers/campaigns/:id", requireMarketerAuth, async (re
     creativeUrl: campaign.contentURI,
     bidPerViewUsdc: (Number(campaign.rewardPerImpression) / 1e6).toFixed(6),
     budgetUsdc: (Number(campaign.budgetRemaining) / 1e6).toFixed(6),
-    spentUsdc: "0.000000",
+    spentUsdc,
     status: campaign.active ? "active" : "paused",
     ctaUrl: campaign.ctaUrl,
     targeting: campaign.targeting,
@@ -211,6 +217,12 @@ campaignRouter.patch("/v1/marketers/campaigns/:id", requireMarketerAuth, async (
 
   await campaign.save();
 
+  const impressionsCount = await AdImpression.countDocuments({
+    campaignId: campaign.onchainId,
+    status: { $in: ["CLAIMED", "ANCHORED"] }
+  });
+  const spentUsdc = (impressionsCount * Number(campaign.rewardPerImpression) / 1e6).toFixed(6);
+
   const mapped = {
     _id: campaign._id,
     onchainId: campaign.onchainId,
@@ -219,7 +231,7 @@ campaignRouter.patch("/v1/marketers/campaigns/:id", requireMarketerAuth, async (
     creativeUrl: campaign.contentURI,
     bidPerViewUsdc: (Number(campaign.rewardPerImpression) / 1e6).toFixed(6),
     budgetUsdc: (Number(campaign.budgetRemaining) / 1e6).toFixed(6),
-    spentUsdc: "0.000000",
+    spentUsdc,
     status: campaign.active ? "active" : "paused",
     ctaUrl: campaign.ctaUrl,
     targeting: campaign.targeting,
