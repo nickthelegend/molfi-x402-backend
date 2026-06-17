@@ -5,6 +5,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { env } from '../env.js';
 import { Marketer, Campaign, Impression, MerkleBatch, AdClick } from './models.js';
+import { Campaign as ModernCampaign, AdImpression } from '../ads/models.js';
 import { generateSessionToken, verifySessionToken, verifySiweSignature } from './auth.js';
 import {
   nonceSchema,
@@ -200,35 +201,65 @@ marketersRouter.post('/v1/marketers/onboarding/accept-tos', requireMarketer, asy
 
 // Stats route
 marketersRouter.get('/v1/marketers/stats', requireMarketer, async (req: any, res) => {
-  const campaigns = await Campaign.find({ marketerId: req.marketerId });
-  const campaignIds = campaigns.map((c) => c._id.toString());
+  try {
+    const legacyCampaigns = await Campaign.find({ marketerId: req.marketerId });
+    const legacyCampaignIds = legacyCampaigns.map((c) => c._id.toString());
 
-  const totalCampaigns = campaigns.length;
-  const activeCampaigns = campaigns.filter((c) => c.status === 'active').length;
+    const modernCampaigns = await ModernCampaign.find({ marketer: req.marketerId });
+    const modernCampaignIds = modernCampaigns.map((c) => c.onchainId);
 
-  const impressions = await Impression.find({ campaignId: { $in: campaignIds }, status: 'claimed' });
-  const totalImpressions = impressions.length;
+    const totalCampaigns = legacyCampaigns.length + modernCampaigns.length;
+    const activeCampaigns =
+      legacyCampaigns.filter((c) => c.status === 'active').length +
+      modernCampaigns.filter((c) => c.active === true).length;
 
-  let avgWatchMs = 0;
-  if (totalImpressions > 0) {
-    const sum = impressions.reduce((acc, imp) => acc + imp.durationMs, 0);
-    avgWatchMs = Math.round(sum / totalImpressions);
+    // Fetch impressions for both legacy and modern
+    const legacyImpressions = await Impression.find({
+      campaignId: { $in: legacyCampaignIds },
+      status: 'claimed'
+    });
+    const modernImpressions = await AdImpression.find({
+      campaignId: { $in: modernCampaignIds },
+      status: { $in: ['CLAIMED', 'ANCHORED'] }
+    });
+
+    const totalImpressions = legacyImpressions.length + modernImpressions.length;
+
+    // Fetch clicks for legacy and modern
+    const legacyImpressionIds = legacyImpressions.map(i => i._id.toString());
+    const modernImpressionIds = modernImpressions.map(i => i._id.toString());
+    const allImpressionIds = [...legacyImpressionIds, ...modernImpressionIds];
+
+    const clicks = await AdClick.find({ impressionId: { $in: allImpressionIds } });
+    const totalClicks = clicks.length;
+    const ctr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+
+    // Sum spend
+    const legacySpent = legacyCampaigns.reduce((acc, c) => acc + parseFloat(c.spentUsdc || '0'), 0);
+    
+    let modernSpent = 0;
+    for (const c of modernCampaigns) {
+      const count = await AdImpression.countDocuments({
+        campaignId: c.onchainId,
+        status: { $in: ['CLAIMED', 'ANCHORED'] }
+      });
+      const spent = (count * Number(c.rewardPerImpression)) / 1e6;
+      modernSpent += spent;
+    }
+
+    const totalSpent = legacySpent + modernSpent;
+
+    res.json({
+      totalSpendUsdc: totalSpent.toFixed(6),
+      totalImpressions,
+      avgWatchPercent: totalImpressions > 0 ? 100 : 0,
+      activeCampaigns,
+      totalClicks,
+      ctr: ctr.toFixed(2),
+    });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
   }
-
-  const clicks = await AdClick.find({ impressionId: { $in: impressions.map(i => i._id) } });
-  const totalClicks = clicks.length;
-  const ctr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
-
-  const totalSpent = campaigns.reduce((acc, c) => acc + parseFloat(c.spentUsdc), 0);
-
-  res.json({
-    totalSpendUsdc: totalSpent.toFixed(6),
-    totalImpressions,
-    avgWatchPercent: totalImpressions > 0 ? 100 : 0,
-    activeCampaigns,
-    totalClicks,
-    ctr: ctr.toFixed(2),
-  });
 });
 
 // Campaigns routes
@@ -664,9 +695,14 @@ marketersRouter.post('/v1/admin/marketers/:id/suspend', requireMarketer, require
 
 marketersRouter.get('/v1/admin/stats', requireMarketer, requireAdmin, async (req: any, res) => {
   try {
-    const totalImpressions = await Impression.countDocuments({ status: 'claimed' });
     const totalMarketers = await Marketer.countDocuments();
-    const totalCampaigns = await Campaign.countDocuments();
+    const legacyCampaigns = await Campaign.countDocuments();
+    const modernCampaigns = await ModernCampaign.countDocuments();
+    const totalCampaigns = legacyCampaigns + modernCampaigns;
+
+    const legacyImpressions = await Impression.countDocuments({ status: 'claimed' });
+    const modernImpressions = await AdImpression.countDocuments({ status: { $in: ['CLAIMED', 'ANCHORED'] } });
+    const totalImpressions = legacyImpressions + modernImpressions;
 
     res.json({
       totalImpressions,
